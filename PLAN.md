@@ -56,7 +56,9 @@ mecánica: relanza los turnos aprobados, vigila los leases y avisa al humano.
    los repos, y lock de escritura. Depende de: nada.
 2. **Sesiones y roles.** `join`/`leave`/`heartbeat`, registro en
    `sessions/<id>.json`, contratos en `roles/<rol>.md`, identidad por turno
-   (`rol@agente [sesión]`) y `claim` con lease. Depende de: 1.
+   (`rol@agente [sesión]`) y `claim`. El lease es el heartbeat de la
+   sesión: el ítem solo guarda `holder`, válido mientras la sesión viva.
+   Depende de: 1.
 3. **Flujos.** Los seis roles, el rol QA con `PASSED`/`FAILED`, `--flow` por
    ítem y la regla de modelo distinto. Depende de: 2.
 4. **Dependencias del plan.** `needs` por paso y `ready`, que lista lo que

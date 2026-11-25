@@ -6,31 +6,17 @@ Run: python3 -I ~/.agents/skills/pantheon/tests/run.py
 import os
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from pantheon import board, store
 
-SCRIPT = os.path.join(ROOT, "pantheon.py")
-
-
-def git(cwd, *args):
-    subprocess.run(("git", *args), cwd=cwd, check=True, capture_output=True)
-
-
-def make_repo(parent, name, remote=None):
-    path = os.path.join(parent, name)
-    os.makedirs(path)
-    git(path, "init", "-q", "-b", "main")
-    git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "start")
-    if remote:
-        git(path, "remote", "add", "origin", remote)
-    return path
+from env import SCRIPT, Env, git, make_repo
 
 
 class Rules(unittest.TestCase):
@@ -103,36 +89,8 @@ class Rules(unittest.TestCase):
         self.assertNotEqual(header["updated"], "old")
 
 
-class Cli(unittest.TestCase):
+class Cli(Env):
     """The command line against a temporary home and real git repos."""
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.home = os.path.join(self.tmp.name, "home")
-        self.config = os.path.join(self.tmp.name, "config.toml")
-        with open(self.config, "w", encoding="utf-8") as target:
-            target.write('[forges]\n"code.example.org" = "gitlab"\n')
-        self.env = {**os.environ, "PANTHEON_HOME": self.home, "PANTHEON_CONFIG": self.config}
-        os.environ.update(PANTHEON_HOME=self.home, PANTHEON_CONFIG=self.config)
-        self.alpha = make_repo(self.tmp.name, "alpha", "git@code.example.org:team/alpha.git")
-        self.beta = make_repo(self.tmp.name, "beta", "https://github.com/me/beta.git")
-        self.outside = os.path.join(self.tmp.name, "outside")
-        os.makedirs(self.outside)
-
-    def tearDown(self):
-        os.environ.pop("PANTHEON_HOME", None)
-        os.environ.pop("PANTHEON_CONFIG", None)
-        self.tmp.cleanup()
-
-    def cli(self, cwd, *args, timeout=20):
-        return subprocess.run(
-            (sys.executable, "-I", SCRIPT, *args), cwd=cwd, capture_output=True, text=True, env=self.env, timeout=timeout
-        )
-
-    def ok(self, cwd, *args):
-        result = self.cli(cwd, *args)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
 
     def test_init_fills_the_metadata_from_the_repo(self):
         self.assertEqual(self.ok(self.alpha, "init", "A-1", "--title", "Fix it", "--mr", "7").strip(), "alpha/A-1")
@@ -173,7 +131,7 @@ class Cli(unittest.TestCase):
         ambiguous = self.cli(self.outside, "show", "SAME")
         self.assertEqual(ambiguous.returncode, 1)
         self.assertIn("repo: beta",self.ok(self.outside, "show", "beta/SAME"))
-        self.ok(self.outside, "post", "alpha/SAME", "--role", "coder", "--next", "reviewer", "-m", "x")
+        self.ok(self.outside, "post", "alpha/SAME", "--session", self.join(self.outside, "coder"), "--next", "reviewer", "-m", "x")
         self.assertEqual(store.read("alpha", "SAME")[0]["next"], "reviewer")
         self.assertEqual(store.read("beta", "SAME")[0]["next"], "coder")
 
@@ -217,7 +175,7 @@ class Cli(unittest.TestCase):
         )
         time.sleep(0.4)
         self.assertIsNone(waiter.poll())
-        self.ok(self.alpha, "post", "A-1", "--role", "coder", "--next", "reviewer", "--commit", "abc", "-m", "please")
+        self.ok(self.alpha, "post", "A-1", "--session", self.join(self.alpha, "coder"), "--next", "reviewer", "--commit", "abc", "-m", "please")
         out, err = waiter.communicate(timeout=10)
         self.assertEqual(waiter.returncode, 0, err)
         self.assertIn("please", out)
@@ -227,7 +185,7 @@ class Cli(unittest.TestCase):
         timeout = self.cli(self.outside, "inbox", "--role", "reviewer", "--timeout", "0.3", "--interval", "0.1")
         self.assertEqual(timeout.returncode, 2)
         self.ok(self.beta, "init", "B-1")
-        self.ok(self.beta, "post", "B-1", "--role", "coder", "--next", "reviewer", "-m", "look")
+        self.ok(self.beta, "post", "B-1", "--session", self.join(self.beta, "coder"), "--next", "reviewer", "-m", "look")
         out = self.ok(self.outside, "inbox", "--role", "reviewer", "--timeout", "2")
         self.assertIn("===== beta/B-1 =====", out)
         alpha_only = self.cli(self.alpha, "inbox", "--role", "reviewer", "--timeout", "0.3", "--interval", "0.1")
@@ -235,13 +193,13 @@ class Cli(unittest.TestCase):
 
     def test_inbox_handed_to_wakes_on_a_new_hand_off(self):
         self.ok(self.alpha, "init", "A-1")
-        self.ok(self.alpha, "post", "A-1", "--role", "coder", "--next", "reviewer", "-m", "c")
+        self.ok(self.alpha, "post", "A-1", "--session", self.join(self.alpha, "coder"), "--next", "reviewer", "-m", "c")
         waiter = subprocess.Popen(
             (sys.executable, "-I", SCRIPT, "inbox", "--role", "coder", "--handed-to", "human", "--interval", "0.1"),
             cwd=self.alpha, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         time.sleep(0.4)
-        self.ok(self.alpha, "post", "A-1", "--role", "reviewer", "--next", "human", "--verdict", "APPROVED", "-m", "ok")
+        self.ok(self.alpha, "post", "A-1", "--session", self.join(self.alpha, "reviewer"), "--next", "human", "--verdict", "APPROVED", "-m", "ok")
         out, err = waiter.communicate(timeout=10)
         self.assertEqual(waiter.returncode, 0, err)
         self.assertIn("verdict: APPROVED", out)
@@ -253,7 +211,7 @@ class Cli(unittest.TestCase):
         plan_file = os.path.join(self.tmp.name, "plan.md")
         with open(plan_file, "w", encoding="utf-8") as target:
             target.write("## Goal\nG\n## Steps\n1. one\n2. two\n")
-        self.ok(self.alpha, "plan", "P", "--role", "coder", "--file", plan_file)
+        self.ok(self.alpha, "plan", "P", "--session", self.join(self.alpha, "coder"), "--file", plan_file)
         self.assertEqual(self.cli(self.alpha, "init", "S-1", "--plan", "P", "--step", "1").returncode, 1)
         self.ok(self.alpha, "post", "P", "--role", "human", "--next", "human", "--verdict", "APPROVED", "-m", "go")
         self.assertEqual(self.cli(self.alpha, "init", "S-0", "--plan", "P", "--step", "0").returncode, 1)

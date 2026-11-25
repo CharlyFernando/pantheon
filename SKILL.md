@@ -21,8 +21,11 @@ siendo coherentes. El plan de Pantheon está en `PLAN.md`.
 ```bash
 pantheon() { python3 -I "$HOME/.agents/skills/pantheon/pantheon.py" "$@"; }
 pantheon init TASK-42 --title "Arreglar el login" --mr 128   # rama y worktree salen del directorio actual
-pantheon post TASK-42 --role coder --next reviewer --commit <sha> --file nota.md
-pantheon wait TASK-42 --role coder --after-turn <turno de tu post>
+pantheon join TASK-42 --role coder --agent claude --model claude-opus-5-5   # → session s-1a2b3c + tu contrato
+pantheon post TASK-42 --session s-1a2b3c --next reviewer --commit <sha> --file nota.md
+pantheon wait TASK-42 --session s-1a2b3c --after-turn <turno de tu post>
+pantheon sessions                   # sesiones vivas y vencidas
+pantheon leave s-1a2b3c             # al terminar: libera lo que tenías tomado
 pantheon show myrepo/TASK-42        # repo/ITEM funciona desde cualquier directorio
 pantheon inbox --role reviewer      # el repo actual; fuera de git o con --all, todos
 pantheon list --all
@@ -31,12 +34,36 @@ pantheon plan PLAN-X --role coder --file plan.md
 pantheon init X-1 --plan PLAN-X --step 1
 ```
 
+## Sesiones
+
+Un agente no tiene rol fijo: el humano se lo asigna, y el agente entra con
+`join [ITEM] --role <rol> --agent <claude|gentle|opencode|codex|antigravity>`
+(más `--model` si lo sabe). `join` responde con el id de la sesión y el
+**contrato del rol** (`roles/<rol>.md`), que dice qué leer, qué postear y a
+quién pasar el turno. `pantheon role <rol>` lo vuelve a imprimir.
+
+- Todo rol que no sea `human` postea con `--session <id>` (o
+  `PANTHEON_SESSION`), que fija su rol. El post queda firmado como
+  `## turn N · coder@claude [s-1a2b3c] → reviewer`, con el modelo.
+- **Tomar un ítem.** `join` con ítem lo toma si es el turno de tu rol, y
+  `claim` lo toma después. Mientras otra sesión viva lo tiene, nadie más
+  postea en él e `inbox` no se lo ofrece a otra sesión del mismo rol. Un post
+  lo libera, porque el siguiente turno lo toma quien le toque.
+- **Seguir vivo.** Una sesión está viva mientras su heartbeat tenga menos de
+  `[sessions] lease_minutes` (30 por defecto) y, si registró `--pid`, ese
+  proceso siga corriendo. Cada comando con `--session` renueva el heartbeat,
+  y también `wait` e `inbox` mientras esperan. En un trabajo largo sin
+  comandos, llama a `heartbeat <id>`. Los ítems de una sesión vencida se
+  pueden volver a tomar.
+- `leave <id>` cierra la sesión y libera sus ítems.
+
 ## Metadata de un ítem
 
 | Campo | Para qué |
 |---|---|
 | `item`, `repo`, `kind`, `title` | Qué es: `change` o `plan`, y de qué repo |
 | `turn`, `next`, `round`, `max_rounds` | De quién es el turno y cuántas rondas de revisión van |
+| `holder` | La sesión que trabaja el ítem ahora; vale mientras esa sesión siga viva |
 | `branch`, `worktree`, `commit` | Dónde está el código y qué commit se revisa |
 | `forge`, `mr` | `gitlab` o `github` (por el host del remote) y el número del MR o PR |
 | `verdict`, `findings`, `reason` | La última revisión y, si el turno pasó al humano, por qué |

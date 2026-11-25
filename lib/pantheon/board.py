@@ -68,14 +68,47 @@ def next_role(header, role, wanted, verdict, findings):
     return wanted, ""
 
 
-def apply_post(header, history, role, wanted, text, commit=None, verdict=None, findings=None, now=None):
-    """Return the header and history after `role` posts `text` handing over to `wanted`."""
+def check_claim(header, role, session_id, live_holder):
+    """Refuse a session acting on an item that is not its turn or that another live session holds.
+
+    `live_holder` is the id of the live session holding the item, or "".
+    """
+    if role != "human" and header.get("next") != role:
+        raise PermissionError(f"it is {header.get('next')}'s turn, not {role}'s")
+    if role != "human" and live_holder and live_holder != session_id:
+        raise PermissionError(f"{header.get('item')} is held by session {live_holder}")
+
+
+def signature(role, agent=None, session_id=None):
+    """How a post names its author: `coder@claude [s-1a2b3c]`, or the bare role."""
+    name = f"{role}@{agent}" if agent else role
+    return f"{name} [{session_id}]" if session_id else name
+
+
+def apply_post(
+    header,
+    history,
+    role,
+    wanted,
+    text,
+    commit=None,
+    verdict=None,
+    findings=None,
+    now=None,
+    agent=None,
+    session_id=None,
+    model=None,
+    live_holder="",
+):
+    """Return the header and history after `role` posts `text` handing over to `wanted`.
+
+    The post releases the item: whoever takes the next turn claims it anew.
+    """
     if role not in ROLES or wanted not in ROLES:
         raise ValueError(f"roles are {', '.join(ROLES)}")
     if verdict and verdict not in VERDICTS:
         raise ValueError(f"verdicts are {', '.join(VERDICTS)}")
-    if role != "human" and header.get("next") != role:
-        raise PermissionError(f"it is {header.get('next')}'s turn, not {role}'s")
+    check_claim(header, role, session_id, live_holder)
     if not text.strip():
         raise ValueError("a post needs text")
     found = findings_of(",".join(findings or []))
@@ -90,7 +123,7 @@ def apply_post(header, history, role, wanted, text, commit=None, verdict=None, f
     if role == "coder" and header.get("verdict") == "CHANGES_REQUESTED":
         header["round"] = str(int(header.get("round", "1")) + 1)
     stamp = now_stamp(now)
-    header.update({"turn": str(turn), "next": following, "reason": reason, "updated": stamp})
+    header.update({"turn": str(turn), "next": following, "reason": reason, "updated": stamp, "holder": ""})
     if commit:
         header["commit"] = commit
     if role == "reviewer" or (role == "human" and verdict):
@@ -98,7 +131,9 @@ def apply_post(header, history, role, wanted, text, commit=None, verdict=None, f
         header["findings"] = ",".join(found)
     if approves_plan:
         header["approved_version"] = header["plan_version"]
-    details = [f"commit: {commit}"] if commit else []
+    details = [f"model: {model}"] if model else []
+    if commit:
+        details.append(f"commit: {commit}")
     if verdict:
         details.append(f"verdict: {verdict}")
     if found:
@@ -106,12 +141,12 @@ def apply_post(header, history, role, wanted, text, commit=None, verdict=None, f
     if reason:
         details.append(f"handed to the human: {reason}")
     meta = "".join(f"- {d}\n" for d in details)
-    title = f"## turn {turn} · {role} → {following} · {stamp}"
+    title = f"## turn {turn} · {signature(role, agent, session_id)} → {following} · {stamp}"
     post = f"\n{title}\n\n{meta}{chr(10) if meta else ''}{text.strip()}\n"
     return header, history.rstrip("\n") + "\n" + post
 
 
-def apply_plan(header, role, now=None):
+def apply_plan(header, role, now=None, session_id=None, live_holder=""):
     """The header of a plan after `role` replaces its text, bumping its version.
 
     Revising an approved plan reopens it: the turn goes to whoever revised it
@@ -122,8 +157,8 @@ def apply_plan(header, role, now=None):
     if role not in PLAN_WRITERS:
         raise ValueError(f"plans are written by {', '.join(PLAN_WRITERS)}")
     reopens = plan_approved(header)
-    if role != "human" and not reopens and header.get("next") != role:
-        raise PermissionError(f"it is {header.get('next')}'s turn, not {role}'s")
+    if not reopens:
+        check_claim(header, role, session_id, live_holder)
     header = dict(header)
     header["plan_version"] = str(int(header.get("plan_version", "0")) + 1)
     header["updated"] = now_stamp(now)

@@ -26,6 +26,7 @@ HEADER_KEYS = (
     "title",
     "turn",
     "next",
+    "holder",
     "round",
     "max_rounds",
     "branch",
