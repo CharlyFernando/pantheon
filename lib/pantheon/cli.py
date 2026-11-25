@@ -10,7 +10,7 @@ import os
 import sys
 import time
 
-from . import board, sessions, store
+from . import board, plans, sessions, store
 
 ROLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "roles")
 AGENT_ROLES = tuple(r for r in board.ROLES if r != "human")
@@ -168,7 +168,24 @@ def cmd_init(args):
                 raise Failure(
                     f"plan {args.plan} v{plan_header.get('plan_version', '0')} is not approved by the human"
                 )
-            fields.update(plan=args.plan, step=args.step, plan_version=plan_header["plan_version"])
+            steps = plans.read_steps(plan_header.get("steps"))
+            if steps and args.step not in steps:
+                raise Failure(f"plan {args.plan} has no step {args.step}")
+            pairs = [(name, h) for _, name, h, _ in store.items([slug])]
+            if any(h.get("plan") == args.plan and h.get("step") == str(args.step) for _, h in pairs):
+                raise Failure(f"step {args.step} of {args.plan} already has an item")
+            missing = plans.missing_needs(plan_header, args.step, pairs)
+            if missing and not args.ignore_needs:
+                raise Failure(
+                    f"step {args.step} needs step {', '.join(map(str, missing))} done first "
+                    "(--ignore-needs opens it anyway)"
+                )
+            fields.update(
+                plan=args.plan,
+                step=args.step,
+                needs=",".join(map(str, steps.get(args.step, ()))),
+                plan_version=plan_header["plan_version"],
+            )
         cwd = os.getcwd()
         worktree = args.worktree or (store.git(cwd, "rev-parse", "--show-toplevel") if common else None)
         branch = args.branch or (store.git(cwd, "branch", "--show-current") if common else None)
@@ -205,6 +222,7 @@ def cmd_plan(args):
                 session_id=record["id"] if record else None,
                 live_holder=sessions.holder_alive(header),
             )
+            header["steps"] = plans.format_steps(plans.parse_steps(text))
         except (PermissionError, ValueError) as e:
             raise Failure(e) from e
         store.write_text(store.plan_path(slug, item), text.strip() + "\n")
@@ -547,6 +565,37 @@ def cmd_show(args):
     return 0
 
 
+def cmd_ready(args):
+    if args.plan:
+        slug, name = resolve(args.plan, args.repo)
+        targets = [(slug, name, read_existing(slug, name)[0])]
+        if targets[0][2].get("kind") != "plan":
+            raise Failure(f"{args.plan} is not a plan")
+    else:
+        targets = [(s, n, h) for s, n, h, _ in store.items(scope(args)) if h.get("kind") == "plan"]
+    for index, (slug, name, header) in enumerate(targets):
+        if index:
+            print()
+        state = "approved" if board.plan_approved(header) else "not approved"
+        print(f"===== plan {slug}/{name} v{header.get('plan_version', '0')} ({state}) =====")
+        try:
+            titles = {n: t for n, (t, _) in plans.parse_steps(store.read_plan(slug, name)).items()}
+        except (OSError, ValueError):
+            titles = {}
+        pairs = [(n, h) for _, n, h, _ in store.items([slug])]
+        rows = [
+            (str(step), short(titles.get(step, ""), 40), ",".join(map(str, needs)), item, state_, detail)
+            for step, needs, item, state_, detail in plans.step_states(header, pairs)
+        ]
+        if not rows:
+            print("no steps: write them as a numbered list under ## Steps")
+            continue
+        table(("STEP", "TITLE", "NEEDS", "ITEM", "STATE", "DETAIL"), rows)
+    if not targets:
+        print("no plans")
+    return 0
+
+
 def cmd_repos(args):
     for slug in store.repos():
         try:
@@ -578,6 +627,7 @@ def parser():
     init.add_argument("--max-rounds", type=int, default=3)
     init.add_argument("--plan")
     init.add_argument("--step", type=int)
+    init.add_argument("--ignore-needs", action="store_true", help="open a step before the steps it needs are done")
     init.add_argument("--flow", help="roles in order, e.g. coder,reviewer (default: coder,reviewer,qa; plans planner,reviewer)")
     init.set_defaults(run=cmd_init)
 
@@ -619,6 +669,11 @@ def parser():
     listing.add_argument("--role", choices=board.ROLES)
     listing.add_argument("--all", action="store_true", help="every repo")
     listing.set_defaults(run=cmd_list)
+
+    ready = commands.add_parser("ready", parents=[common], help="the steps of each approved plan and which can start")
+    ready.add_argument("plan", nargs="?", help="one plan; default: every plan in scope")
+    ready.add_argument("--all", action="store_true", help="every repo")
+    ready.set_defaults(run=cmd_ready)
 
     repos = commands.add_parser("repos", help="every repo with a board")
     repos.set_defaults(run=cmd_repos, repo=None)

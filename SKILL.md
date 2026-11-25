@@ -32,6 +32,7 @@ pantheon note TASK-42 --session s-7a8b9c -m "…"   # nota sin consumir turno
 pantheon list --all
 pantheon init PLAN-X --kind plan --title "…"
 pantheon plan PLAN-X --session <sesión planner> --file plan.md
+pantheon ready PLAN-X                # qué pasos están done, active, ready o blocked
 pantheon init X-1 --plan PLAN-X --step 1
 ```
 
@@ -70,7 +71,8 @@ quién pasar el turno. `pantheon role <rol>` lo vuelve a imprimir.
 | `coder_model` | El modelo del último post del coder: reviewer y QA corren otro |
 | `forge`, `mr` | `gitlab` o `github` (por el host del remote) y el número del MR o PR |
 | `verdict`, `findings`, `reason` | La última revisión y, si el turno pasó al humano, por qué |
-| `plan`, `step`, `plan_version`, `approved_version` | El plan al que pertenece el ítem o, en un plan, su versión aprobada |
+| `plan`, `step`, `needs` | El plan al que pertenece el ítem, su paso y los pasos de los que depende |
+| `steps`, `plan_version`, `approved_version` | En un plan: sus pasos con dependencias, su versión y la versión aprobada |
 | `created`, `updated` | Cuándo se abrió y cuándo cambió por última vez |
 
 ## Roles y flujos
@@ -127,8 +129,10 @@ escribe el planner con `plan` en su turno, y tiene tres partes:
 - **Goal**: el estado final en una o dos frases.
 - **Decisions**: las decisiones que fijó el humano; las revisiones no las
   reabren.
-- **Steps**: uno por MR, numerados, cada uno con un solo propósito y en orden
-  de dependencias.
+- **Steps** (`## Steps` o `## Pasos`): uno por MR, numerados, cada uno con un
+  solo propósito y terminando con `Depende de: 1, 2` (o `nada`). `plan` lee
+  esas dependencias, rechaza las que no existen y los ciclos, y las guarda en
+  la cabecera como `steps: 1 2<1 3<1,2`.
 
 Solo el humano aprueba un plan, posteando `--verdict APPROVED` en él; la
 aprobación de un reviewer se lo pasa al humano. Revisar el texto con `plan`
@@ -136,8 +140,10 @@ sube la versión y necesita una nueva aprobación. Un coder que descubre que
 el plan debe cambiar puede reabrir un plan aprobado con `plan`; su post va
 directo al humano. Cada paso es un ítem abierto
 con `--plan PLAN-X --step N`, que `init` rechaza mientras la versión actual
-del plan no esté aprobada. `wait`, `inbox` y `show` imprimen el plan con el
-ítem:
+del plan no esté aprobada, y también mientras los pasos que necesita no
+estén terminados (`--ignore-needs` lo abre igual). Un paso está terminado
+cuando su ítem completó el flujo con `APPROVED` o `PASSED`; `ready` muestra el
+estado de cada paso. `wait`, `inbox` y `show` imprimen el plan con el ítem:
 
 | El hallazgo | La revisión |
 |---|---|

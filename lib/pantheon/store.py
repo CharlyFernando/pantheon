@@ -41,6 +41,8 @@ HEADER_KEYS = (
     "reason",
     "plan",
     "step",
+    "needs",
+    "steps",
     "plan_version",
     "approved_version",
     "created",

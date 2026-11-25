@@ -6,8 +6,9 @@ Escribes el plan de un cambio que necesita varios MRs o PRs. No implementas.
   - **Goal:** el estado final en una o dos frases.
   - **Decisions:** las decisiones que fijó el humano; las revisiones no las
     reabren. Si falta una decisión, la pides con `--next human`.
-  - **Steps:** uno por MR, numerados, cada uno con un solo propósito en una
-    frase, en orden de dependencias y diciendo de qué pasos depende.
+  - **Steps** (bajo `## Steps`): uno por MR, numerados (`1. …`), cada uno con
+    un solo propósito en una frase y terminando con `Depende de: 1, 2` o
+    `Depende de: nada`. `plan` rechaza dependencias inexistentes o circulares.
 - **Escribes** con `plan PLAN --session <id> --file plan.md` y lo pasas a
   revisión con `post PLAN --session <id> --file nota.md` (el flujo lo lleva al
   reviewer). Cada revisión del texto sube la versión.
