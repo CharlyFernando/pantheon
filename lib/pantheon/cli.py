@@ -148,7 +148,7 @@ def cmd_init(args):
         if os.path.exists(path):
             raise Failure(f"{slug}/{args.item} already exists")
         if args.kind == "plan":
-            header = board.new_plan(args.item, slug, args.title, args.max_rounds)
+            header = board.new_plan(args.item, slug, args.title, args.max_rounds, flow=args.flow)
             store.write(slug, args.item, header, f"\n# {args.item}\n")
             print(f"{slug}/{args.item}")
             return 0
@@ -181,7 +181,7 @@ def cmd_init(args):
             mr=args.mr or "",
             commit="",
         )
-        header = board.new_item(args.item, slug, args.title, args.max_rounds, **fields)
+        header = board.new_item(args.item, slug, args.title, args.max_rounds, flow=args.flow, **fields)
         store.write(slug, args.item, header, f"\n# {args.item}\n")
     print(f"{slug}/{args.item}")
     return 0
@@ -251,6 +251,8 @@ def available(header, role, after_turn, record):
     """Whether the turn is `role`'s past `after_turn` and no other live session holds it."""
     if not board.ready(header, role, after_turn):
         return False
+    if record and role in board.CHECKERS and board.same_model(record.get("model"), header.get("coder_model")):
+        return False
     holder = sessions.holder_alive(header)
     return not holder or (record is not None and holder == record["id"])
 
@@ -267,6 +269,28 @@ class Beat:
             if current.get("state") == "active":
                 self.record = sessions.touch(current)
             self.last = time.monotonic()
+
+
+def cmd_note(args):
+    slug, item = resolve(args.item, args.repo)
+    text = text_of(args)
+    role, record = identity(args)
+    with store.locked(slug):
+        header, history = read_existing(slug, item)
+        try:
+            header, history = board.apply_note(
+                header,
+                history,
+                role,
+                text,
+                agent=record["agent"] if record else None,
+                session_id=record["id"] if record else None,
+            )
+        except ValueError as e:
+            raise Failure(e) from e
+        store.write(slug, item, header, history)
+    print(f"note on {slug}/{item}")
+    return 0
 
 
 def cmd_wait(args):
@@ -332,7 +356,7 @@ def take(slug, item, role, record):
         header, history = read_existing(slug, item)
         live = sessions.holder_alive(header)
         try:
-            board.check_claim(header, role, record["id"], live)
+            board.check_claim(header, role, record["id"], live, record.get("model"))
         except PermissionError as e:
             raise Failure(e) from e
         header["holder"] = record["id"]
@@ -554,6 +578,7 @@ def parser():
     init.add_argument("--max-rounds", type=int, default=3)
     init.add_argument("--plan")
     init.add_argument("--step", type=int)
+    init.add_argument("--flow", help="roles in order, e.g. coder,reviewer (default: coder,reviewer,qa; plans planner,reviewer)")
     init.set_defaults(run=cmd_init)
 
     plan = commands.add_parser("plan", parents=[common, actor], help="write or revise a plan's text")
@@ -563,7 +588,7 @@ def parser():
 
     post = commands.add_parser("post", parents=[common, actor], help="take a turn and hand it over")
     post.add_argument("item")
-    post.add_argument("--next", required=True, choices=board.ROLES)
+    post.add_argument("--next", choices=board.ROLES, help="default: the flow; agents may only escalate to human")
     post.add_argument("--commit")
     post.add_argument("--verdict", choices=board.VERDICTS)
     post.add_argument("--findings")
@@ -602,11 +627,17 @@ def parser():
     join.add_argument("item", nargs="?", help="the item to work on; without it, wait with inbox")
     join.add_argument("--role", required=True, choices=AGENT_ROLES)
     join.add_argument("--agent", required=True)
-    join.add_argument("--model", help="the model the agent runs, e.g. claude-opus-5-5")
+    join.add_argument("--model", required=True, help="the model the agent runs, e.g. claude-opus-5-5")
     join.add_argument("--mode", choices=sessions.MODES, default="interactive")
     join.add_argument("--harness-session", help="the CLI's own session id, to resume it later")
     join.add_argument("--pid", type=int, help="the agent's process, when Pantheon launched it")
     join.set_defaults(run=cmd_join)
+
+    note = commands.add_parser("note", parents=[common, actor], help="add a note without taking the turn")
+    note.add_argument("item")
+    note.add_argument("-m", "--message")
+    note.add_argument("--file")
+    note.set_defaults(run=cmd_note)
 
     claim = commands.add_parser("claim", parents=[common, actor], help="hold an item whose turn is yours")
     claim.add_argument("item")

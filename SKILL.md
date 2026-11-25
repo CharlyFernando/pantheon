@@ -22,15 +22,16 @@ siendo coherentes. El plan de Pantheon está en `PLAN.md`.
 pantheon() { python3 -I "$HOME/.agents/skills/pantheon/pantheon.py" "$@"; }
 pantheon init TASK-42 --title "Arreglar el login" --mr 128   # rama y worktree salen del directorio actual
 pantheon join TASK-42 --role coder --agent claude --model claude-opus-5-5   # → session s-1a2b3c + tu contrato
-pantheon post TASK-42 --session s-1a2b3c --next reviewer --commit <sha> --file nota.md
+pantheon post TASK-42 --session s-1a2b3c --commit <sha> --file nota.md   # el flujo decide a quién va
 pantheon wait TASK-42 --session s-1a2b3c --after-turn <turno de tu post>
 pantheon sessions                   # sesiones vivas y vencidas
 pantheon leave s-1a2b3c             # al terminar: libera lo que tenías tomado
 pantheon show myrepo/TASK-42        # repo/ITEM funciona desde cualquier directorio
-pantheon inbox --role reviewer      # el repo actual; fuera de git o con --all, todos
+pantheon inbox --session s-4d5e6f   # el repo actual; fuera de git o con --all, todos
+pantheon note TASK-42 --session s-7a8b9c -m "…"   # nota sin consumir turno
 pantheon list --all
 pantheon init PLAN-X --kind plan --title "…"
-pantheon plan PLAN-X --role coder --file plan.md
+pantheon plan PLAN-X --session <sesión planner> --file plan.md
 pantheon init X-1 --plan PLAN-X --step 1
 ```
 
@@ -38,7 +39,7 @@ pantheon init X-1 --plan PLAN-X --step 1
 
 Un agente no tiene rol fijo: el humano se lo asigna, y el agente entra con
 `join [ITEM] --role <rol> --agent <claude|gentle|opencode|codex|antigravity>`
-(más `--model` si lo sabe). `join` responde con el id de la sesión y el
+y `--model <el modelo que corre>`. `join` responde con el id de la sesión y el
 **contrato del rol** (`roles/<rol>.md`), que dice qué leer, qué postear y a
 quién pasar el turno. `pantheon role <rol>` lo vuelve a imprimir.
 
@@ -62,30 +63,52 @@ quién pasar el turno. `pantheon role <rol>` lo vuelve a imprimir.
 | Campo | Para qué |
 |---|---|
 | `item`, `repo`, `kind`, `title` | Qué es: `change` o `plan`, y de qué repo |
+| `flow` | Los roles que actúan, en orden; después va el humano |
 | `turn`, `next`, `round`, `max_rounds` | De quién es el turno y cuántas rondas de revisión van |
 | `holder` | La sesión que trabaja el ítem ahora; vale mientras esa sesión siga viva |
 | `branch`, `worktree`, `commit` | Dónde está el código y qué commit se revisa |
+| `coder_model` | El modelo del último post del coder: reviewer y QA corren otro |
 | `forge`, `mr` | `gitlab` o `github` (por el host del remote) y el número del MR o PR |
 | `verdict`, `findings`, `reason` | La última revisión y, si el turno pasó al humano, por qué |
 | `plan`, `step`, `plan_version`, `approved_version` | El plan al que pertenece el ítem o, en un plan, su versión aprobada |
 | `created`, `updated` | Cuándo se abrió y cuándo cambió por última vez |
 
-## Turnos
+## Roles y flujos
 
-- `next` nombra quién actúa, y solo ese rol puede postear. El humano siempre
-  puede, para responder, redirigir o detener.
-- El coder postea cuando el commit está listo: `--commit` con el sha completo
-  y, en el texto, qué cambió, por qué y cómo lo probó (comandos y resultados).
-- El reviewer lee `git show <commit>` y el código alrededor, no el resumen del
-  coder. Postea `--verdict APPROVED` (next `human`, que mergea),
-  `CHANGES_REQUESTED` con `--findings KEY,KEY` (claves cortas y estables, una
-  por hallazgo; next `coder`) o `NEEDS_DECISION` (next `human`).
-- El coder responde cada hallazgo por su clave: corregido en `<sha>`, o por
-  qué no.
+| Rol | Hace | Veredictos |
+|---|---|---|
+| `human` | Aprueba planes, decide, mergea y ejecuta mutaciones | cualquiera; postea siempre |
+| `orchestrator` | Vigila el board y propone; no está en ningún flujo | ninguno: deja `note` |
+| `planner` | Escribe el plan | ninguno |
+| `coder` | Implementa y postea el commit | ninguno |
+| `reviewer` | Revisa solo código | `APPROVED`, `CHANGES_REQUESTED`, `NEEDS_DECISION` |
+| `qa` | Verifica comportamiento ejecutándolo | `PASSED`, `FAILED`, `NEEDS_DECISION` |
+
+Un ítem sigue su `flow`: por defecto `coder,reviewer,qa` en un cambio y
+`planner,reviewer` en un plan, y `init --flow coder,reviewer` fija otro. Al
+postear, los agentes no dicen a quién va el turno, porque el flujo lo decide:
+
+- un post sin veredicto, `APPROVED` o `PASSED` va al siguiente rol, y después
+  del último, al humano;
+- `CHANGES_REQUESTED` o `FAILED` vuelve al productor (coder o planner), con
+  una ronda más;
+- `NEEDS_DECISION` va al humano.
+
+Un agente solo puede desviar el turno hacia el humano (`--next human`, que
+queda como `escalated`). El humano lo manda a cualquiera con `--next`; sin
+`--next` ni veredicto, su post responde sin mover el turno.
+
+- El coder postea con `--commit` (sha completo) y, en el texto, qué cambió,
+  por qué y cómo lo probó. Responde cada hallazgo por su clave.
+- El reviewer lee `git show <commit>` y el código alrededor, no el resumen.
+- El QA ejecuta: tests, la app o el navegador, y anota qué vio.
+- Reviewer y QA corren un **modelo** distinto al del coder (`coder_model`);
+  Pantheon no deja tomar el ítem si es el mismo, aunque el harness sí puede
+  ser el mismo.
 
 ## Decide el humano
 
-Postea con `--next human` en lugar de seguir cuando:
+Escala con `--next human` en lugar de seguir cuando:
 
 - un cambio se aparta de un diseño que el humano aprobó;
 - un paso necesita mutar producción, AWS, Keycloak, GitLab o GitHub: eso va al
@@ -98,8 +121,8 @@ la anterior.
 
 ## Planes
 
-Un cambio de varios MRs empieza como un ítem `--kind plan`, cuyo texto escribe
-`plan` y que tiene tres partes:
+Un cambio de varios MRs empieza como un ítem `--kind plan`. Su texto lo
+escribe el planner con `plan` en su turno, y tiene tres partes:
 
 - **Goal**: el estado final en una o dos frases.
 - **Decisions**: las decisiones que fijó el humano; las revisiones no las
@@ -109,7 +132,9 @@ Un cambio de varios MRs empieza como un ítem `--kind plan`, cuyo texto escribe
 
 Solo el humano aprueba un plan, posteando `--verdict APPROVED` en él; la
 aprobación de un reviewer se lo pasa al humano. Revisar el texto con `plan`
-sube la versión y necesita una nueva aprobación. Cada paso es un ítem abierto
+sube la versión y necesita una nueva aprobación. Un coder que descubre que
+el plan debe cambiar puede reabrir un plan aprobado con `plan`; su post va
+directo al humano. Cada paso es un ítem abierto
 con `--plan PLAN-X --step N`, que `init` rechaza mientras la versión actual
 del plan no esté aprobada. `wait`, `inbox` y `show` imprimen el plan con el
 ítem:

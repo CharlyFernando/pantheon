@@ -130,8 +130,8 @@ class Env(unittest.TestCase):
         return result.stdout
 
     def join(self, cwd, role, item=None, agent="claude", model=None):
-        """Start a session and return its id."""
+        """Start a session and return its id; the model defaults to one per agent."""
         extra = (item,) if item else ()
-        extra += ("--model", model) if model else ()
+        extra += ("--model", model or f"{agent}-model")
         out = self.ok(cwd, "join", *extra, "--role", role, "--agent", agent)
         return next(line.split("=", 1)[1] for line in out.splitlines() if line.startswith("export PANTHEON_SESSION="))

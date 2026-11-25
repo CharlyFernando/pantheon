@@ -39,9 +39,9 @@ class Sessions(Env):
         record = sessions.load(session_id)
         self.assertEqual((record["repo"], record["item"], record["model"]), ("alpha", "A-1", "claude-opus-5-5"))
 
-        second = self.ok(self.alpha, "join", "A-1", "--role", "coder", "--agent", "gentle")
+        second = self.ok(self.alpha, "join", "A-1", "--role", "coder", "--agent", "gentle", "--model", "gentle-model")
         self.assertIn(f"held by session {session_id}", second)
-        reviewer = self.ok(self.alpha, "join", "A-1", "--role", "reviewer", "--agent", "opencode")
+        reviewer = self.ok(self.alpha, "join", "A-1", "--role", "reviewer", "--agent", "opencode", "--model", "opencode-model")
         self.assertIn("it is coder's turn", reviewer)
         self.assertIn("# Rol: reviewer", reviewer)
 
@@ -91,7 +91,7 @@ class Sessions(Env):
         self.assertIn("(stale)", self.ok(self.alpha, "list"))
 
     def test_a_session_whose_process_died_is_stale(self):
-        out = self.ok(self.alpha, "join", "A-1", "--role", "coder", "--agent", "claude", "--mode", "headless", "--pid", "999999999")
+        out = self.ok(self.alpha, "join", "A-1", "--role", "coder", "--agent", "claude", "--model", "claude-model", "--mode", "headless", "--pid", "999999999")
         self.assertIn("holding", out)
         self.assertIn("(stale)", self.ok(self.alpha, "list"))
 
@@ -125,11 +125,11 @@ class Sessions(Env):
         self.assertNotIn("(stale)", self.ok(self.alpha, "list"))
 
     def test_agents_are_the_known_ones_or_the_configured_ones(self):
-        self.assertEqual(self.cli(self.alpha, "join", "--role", "coder", "--agent", "nobody").returncode, 1)
+        self.assertEqual(self.cli(self.alpha, "join", "--role", "coder", "--agent", "nobody", "--model", "nobody-model").returncode, 1)
         with open(self.config, "a", encoding="utf-8") as target:
             target.write("[agents.aider]\nenabled = true\n")
-        self.ok(self.alpha, "join", "--role", "coder", "--agent", "aider")
-        self.assertEqual(self.cli(self.alpha, "join", "--role", "human", "--agent", "claude").returncode, 2)
+        self.ok(self.alpha, "join", "--role", "coder", "--agent", "aider", "--model", "aider-model")
+        self.assertEqual(self.cli(self.alpha, "join", "--role", "human", "--agent", "claude", "--model", "claude-model").returncode, 2)
 
     def test_role_prints_each_contract(self):
         for role in ("coder", "reviewer", "human"):

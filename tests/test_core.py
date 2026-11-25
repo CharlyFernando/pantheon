@@ -67,8 +67,8 @@ class Rules(unittest.TestCase):
         header = board.new_plan("P", "r", "", 3)
         with self.assertRaises(ValueError):
             board.apply_post(header, "", "human", "coder", "ok", verdict="APPROVED")
-        header = board.apply_plan(header, "coder")
-        header, history = board.apply_post(header, "", "coder", "reviewer", "plan v1")
+        header = board.apply_plan(header, "planner")
+        header, history = board.apply_post(header, "", "planner", "reviewer", "plan v1")
         header, history = board.apply_post(header, history, "reviewer", "human", "good", verdict="APPROVED")
         self.assertFalse(board.plan_approved(header))
         header, _ = board.apply_post(header, history, "human", "coder", "yes", verdict="APPROVED")
@@ -76,7 +76,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(header["next"], "human")
 
     def test_revising_an_approved_plan_reopens_it(self):
-        header = board.apply_plan(board.new_plan("P", "r", "", 3), "coder")
+        header = board.apply_plan(board.new_plan("P", "r", "", 3), "planner")
         header, _ = board.apply_post(header, "", "human", "human", "yes", verdict="APPROVED")
         header = board.apply_plan(header, "coder")
         self.assertEqual((header["plan_version"], header["next"]), ("2", "coder"))
@@ -199,7 +199,7 @@ class Cli(Env):
             cwd=self.alpha, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         time.sleep(0.4)
-        self.ok(self.alpha, "post", "A-1", "--session", self.join(self.alpha, "reviewer"), "--next", "human", "--verdict", "APPROVED", "-m", "ok")
+        self.ok(self.alpha, "post", "A-1", "--session", self.join(self.alpha, "reviewer", agent="gentle"), "--next", "human", "--verdict", "APPROVED", "-m", "ok")
         out, err = waiter.communicate(timeout=10)
         self.assertEqual(waiter.returncode, 0, err)
         self.assertIn("verdict: APPROVED", out)
@@ -211,7 +211,7 @@ class Cli(Env):
         plan_file = os.path.join(self.tmp.name, "plan.md")
         with open(plan_file, "w", encoding="utf-8") as target:
             target.write("## Goal\nG\n## Steps\n1. one\n2. two\n")
-        self.ok(self.alpha, "plan", "P", "--session", self.join(self.alpha, "coder"), "--file", plan_file)
+        self.ok(self.alpha, "plan", "P", "--session", self.join(self.alpha, "planner"), "--file", plan_file)
         self.assertEqual(self.cli(self.alpha, "init", "S-1", "--plan", "P", "--step", "1").returncode, 1)
         self.ok(self.alpha, "post", "P", "--role", "human", "--next", "human", "--verdict", "APPROVED", "-m", "go")
         self.assertEqual(self.cli(self.alpha, "init", "S-0", "--plan", "P", "--step", "0").returncode, 1)
