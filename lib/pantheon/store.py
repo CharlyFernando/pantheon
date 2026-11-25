@@ -25,6 +25,8 @@ HEADER_KEYS = (
     "kind",
     "title",
     "flow",
+    "cast",
+    "approved",
     "turn",
     "next",
     "holder",

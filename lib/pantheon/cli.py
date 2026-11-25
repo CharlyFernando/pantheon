@@ -7,10 +7,11 @@ the current repo, or at every repo outside git or with `--all`.
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 
-from . import board, plans, sessions, store
+from . import agents, board, dispatch, plans, sessions, store
 
 ROLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "roles")
 AGENT_ROLES = tuple(r for r in board.ROLES if r != "human")
@@ -187,8 +188,11 @@ def cmd_init(args):
                 plan_version=plan_header["plan_version"],
             )
         cwd = os.getcwd()
-        worktree = args.worktree or (store.git(cwd, "rev-parse", "--show-toplevel") if common else None)
-        branch = args.branch or (store.git(cwd, "branch", "--show-current") if common else None)
+        if args.new_worktree:
+            worktree, branch = new_worktree(slug, args.item, args.branch, args.base, common)
+        else:
+            worktree = args.worktree or (store.git(cwd, "rev-parse", "--show-toplevel") if common else None)
+            branch = args.branch or (store.git(cwd, "branch", "--show-current") if common else None)
         if not worktree or not branch:
             raise Failure("an item needs --branch and --worktree")
         fields.update(
@@ -202,6 +206,74 @@ def cmd_init(args):
         store.write(slug, args.item, header, f"\n# {args.item}\n")
     print(f"{slug}/{args.item}")
     return 0
+
+
+def new_worktree(slug, item, branch, base, common):
+    """Create the item's worktree at the configured path; return (path, branch)."""
+    if not common:
+        raise Failure("--new-worktree needs a git repo")
+    template = store.load_config().get("worktrees", {}).get("path", "~/code/{repo}-worktrees/{item}")
+    path = os.path.abspath(os.path.expanduser(template.format(repo=slug, item=item)))
+    branch = branch or f"pantheon/{item.lower()}"
+    if os.path.exists(path):
+        raise Failure(f"{path} already exists")
+    result = subprocess.run(
+        ("git", "worktree", "add", "-b", branch, path, base or "HEAD"), capture_output=True, text=True
+    )
+    if result.returncode:
+        raise Failure(f"git worktree add failed: {result.stderr.strip()}")
+    return path, branch
+
+
+def human_only(command):
+    if os.environ.get("PANTHEON_SESSION"):
+        raise Failure(f"{command} is the human's; an agent session cannot run it")
+
+
+def cmd_approve(args):
+    human_only("approve")
+    slug, item = resolve(args.item, args.repo)
+    with store.locked(slug):
+        header, history = read_existing(slug, item)
+        try:
+            cast = agents.complete_cast(board.flow_of(header), agents.parse_cast(args.cast or []))
+        except ValueError as e:
+            raise Failure(e) from e
+        header["cast"] = agents.format_cast(cast)
+        header["approved"] = board.now_stamp()
+        header, history = board.apply_note(header, history, "human", f"Approved for dispatch. Cast: {header['cast']}")
+        store.write(slug, item, header, history)
+    print(f"approved {slug}/{item}: {header['cast']}")
+    if args.dispatch:
+        return dispatch_one(slug, item, False)
+    return 0
+
+
+def cmd_revoke(args):
+    human_only("revoke")
+    slug, item = resolve(args.item, args.repo)
+    with store.locked(slug):
+        header, history = read_existing(slug, item)
+        header["approved"] = ""
+        header, history = board.apply_note(header, history, "human", "Dispatch approval revoked.")
+        store.write(slug, item, header, history)
+    print(f"revoked {slug}/{item}")
+    return 0
+
+
+def dispatch_one(slug, item, dry_run):
+    try:
+        message = dispatch.run(slug, item, dry_run=dry_run)
+    except dispatch.Refused as e:
+        raise Failure(e) from e
+    print(message)
+    return 3 if message.startswith(dispatch.MANUAL) else 0
+
+
+def cmd_dispatch(args):
+    slug, item = resolve(args.item, args.repo)
+    read_existing(slug, item)
+    return dispatch_one(slug, item, args.dry_run)
 
 
 def cmd_plan(args):
@@ -370,15 +442,11 @@ def cmd_inbox(args):
 
 def take(slug, item, role, record):
     """Make `record` the holder of the item, or explain why it cannot be."""
-    with store.locked(slug):
-        header, history = read_existing(slug, item)
-        live = sessions.holder_alive(header)
-        try:
-            board.check_claim(header, role, record["id"], live, record.get("model"))
-        except PermissionError as e:
-            raise Failure(e) from e
-        header["holder"] = record["id"]
-        store.write(slug, item, header, history)
+    read_existing(slug, item)
+    try:
+        sessions.hold(slug, item, role, record)
+    except PermissionError as e:
+        raise Failure(e) from e
 
 
 def cmd_join(args):
@@ -627,6 +695,8 @@ def parser():
     init.add_argument("--max-rounds", type=int, default=3)
     init.add_argument("--plan")
     init.add_argument("--step", type=int)
+    init.add_argument("--new-worktree", action="store_true", help="create the worktree at [worktrees] path of the config")
+    init.add_argument("--base", help="with --new-worktree: the commit to branch from (default HEAD)")
     init.add_argument("--ignore-needs", action="store_true", help="open a step before the steps it needs are done")
     init.add_argument("--flow", help="roles in order, e.g. coder,reviewer (default: coder,reviewer,qa; plans planner,reviewer)")
     init.set_defaults(run=cmd_init)
@@ -693,6 +763,21 @@ def parser():
     note.add_argument("-m", "--message")
     note.add_argument("--file")
     note.set_defaults(run=cmd_note)
+
+    approve = commands.add_parser("approve", parents=[common], help="the human approves an item for dispatch, with its cast")
+    approve.add_argument("item")
+    approve.add_argument("--cast", action="append", metavar="ROLE=AGENT[:MODEL]", help="repeat per role; defaults come from [defaults.cast]")
+    approve.add_argument("--dispatch", action="store_true", help="launch the current turn right away")
+    approve.set_defaults(run=cmd_approve)
+
+    revoke = commands.add_parser("revoke", parents=[common], help="withdraw an item's dispatch approval")
+    revoke.add_argument("item")
+    revoke.set_defaults(run=cmd_revoke)
+
+    launch = commands.add_parser("dispatch", parents=[common], help="launch the agent whose turn it is (needs approve)")
+    launch.add_argument("item")
+    launch.add_argument("--dry-run", action="store_true", help="print the command instead of running it")
+    launch.set_defaults(run=cmd_dispatch)
 
     claim = commands.add_parser("claim", parents=[common, actor], help="hold an item whose turn is yours")
     claim.add_argument("item")

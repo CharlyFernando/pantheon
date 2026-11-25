@@ -26,6 +26,7 @@ cumplir la herramienta, no la buena voluntad de cada agente.
 - [Instalación](#instalación)
 - [Inicio rápido](#inicio-rápido)
 - [Conceptos](#conceptos)
+- [Dispatch](#dispatch)
 - [Referencia de comandos](#referencia-de-comandos)
 - [Configuración](#configuración)
 - [Diseño](#diseño)
@@ -46,6 +47,9 @@ cumplir la herramienta, no la buena voluntad de cada agente.
   distinto al del coder.
 - **Control humano.** Aprobación de planes, límite de rondas, detección de
   hallazgos repetidos y escalado explícito.
+- **Lanzamiento sin interfaz.** Tras la aprobación humana, Pantheon lanza al
+  agente que corresponde en el worktree del ítem y retoma su conversación en
+  cada ronda.
 - **Planes con dependencias.** Un plan se divide en pasos, uno por MR o PR,
   con dependencias validadas. Un paso no se abre hasta que lo que necesita
   esté terminado.
@@ -198,6 +202,31 @@ STEP  TITLE            NEEDS  ITEM    STATE    DETAIL
 3     Interfaz         2              blocked  needs 2
 ```
 
+## Dispatch
+
+El humano aprueba un ítem junto con su reparto: qué agente y qué modelo
+juega cada rol. A partir de ahí Pantheon lanza al agente al que le toca, sin
+interfaz, en el worktree del ítem.
+
+```bash
+pantheon init TASK-42 --new-worktree --base origin/main
+pantheon approve TASK-42 \
+    --cast coder=claude:claude-opus-5-5 \
+    --cast reviewer=gentle:deepseek/deepseek-v4-pro \
+    --cast qa=opencode:openai/gpt-5 \
+    --dispatch
+pantheon dispatch TASK-42      # turno siguiente; --dry-run muestra el comando
+pantheon revoke TASK-42        # retira la aprobación
+```
+
+- La aprobación cubre todas las rondas del ítem. Cada ítem nuevo requiere la
+  suya.
+- En cada ronda el agente retoma su propia conversación, si su CLI lo
+  permite, y conserva el contexto de las rondas anteriores.
+- La salida de cada agente queda en `~/.local/share/pantheon/logs/`.
+- Los agentes con interfaz propia (como un IDE) no se lanzan: Pantheon
+  indica el comando `join` para unirse manualmente.
+
 ## Referencia de comandos
 
 | Comando | Descripción |
@@ -211,6 +240,9 @@ STEP  TITLE            NEEDS  ITEM    STATE    DETAIL
 | `show ITEM` | Muestra un ítem con su historial |
 | `list` | Estado de los ítems (`--all` para todos los repositorios) |
 | `ready [PLAN]` | Estado de los pasos de cada plan |
+| `approve ITEM` | Aprueba el ítem para dispatch con su reparto (`--cast`, `--dispatch`) |
+| `dispatch ITEM` | Lanza al agente del turno actual (`--dry-run`) |
+| `revoke ITEM` | Retira la aprobación |
 | `join [ITEM]` | Inicia una sesión con un rol, un agente y un modelo |
 | `claim` / `release ITEM` | Toma o libera un ítem |
 | `heartbeat` / `leave SESSION` | Mantiene viva o cierra una sesión |
@@ -234,7 +266,28 @@ Archivo opcional en `~/.config/pantheon/config.toml`:
 # Tiempo sin heartbeat tras el cual una sesión se considera vencida.
 [sessions]
 lease_minutes = 30
+
+# Dónde crea `init --new-worktree` el worktree de cada ítem.
+[worktrees]
+path = "~/code/{repo}-worktrees/{item}"
+
+# Agente por defecto de cada rol en el reparto.
+[defaults.cast]
+planner = "claude"
+coder = "claude"
+
+# Cómo se lanza y se retoma un agente. Marcadores: {prompt} {session} {model} {skill}.
+[agents.claude]
+launch = ["claude", "-p", "--session-id", "{session}", "--model", "{model}", "{prompt}"]
+resume = ["claude", "-p", "--resume", "{session}", "--model", "{model}", "{prompt}"]
+
+[agents.codex]
+enabled = false
 ```
+
+Pantheon trae definiciones para `claude`, `gentle`, `opencode`, `codex` y
+`antigravity`; cualquier otro agente se añade con su propia sección
+`[agents.<nombre>]`.
 
 | Variable de entorno | Uso |
 |---|---|
@@ -268,6 +321,8 @@ pantheon/
 │   ├── board.py         Reglas de turnos, flujos y veredictos
 │   ├── sessions.py      Sesiones, heartbeat y vigencia
 │   ├── plans.py         Pasos de un plan y sus dependencias
+│   ├── agents.py        Definición de agentes y reparto por rol
+│   ├── dispatch.py      Lanzamiento y reanudación de agentes
 │   └── cli.py           Interfaz de línea de comandos
 ├── roles/               Contratos de cada rol
 └── tests/               Suite de tests
@@ -288,7 +343,8 @@ los datos del usuario.
 - [x] Sesiones, contratos de rol e identidad por turno
 - [x] Roles, flujos y revisión cruzada
 - [x] Dependencias entre pasos de un plan
-- [ ] Dispatch: reparto de agentes por rol y lanzamiento sin interfaz tras la aprobación humana
+- [x] Dispatch: reparto de agentes por rol y lanzamiento sin interfaz tras la aprobación humana
 - [ ] Elios: servicio que relanza turnos aprobados, vigila sesiones y envía notificaciones
 - [ ] Vista de estado global con el estado del MR o PR (GitLab y GitHub) y archivado
 - [ ] Instalación automática en las carpetas de skills de cada agente
+- [ ] Soporte multiplataforma: cualquier distribución Linux, macOS y Windows

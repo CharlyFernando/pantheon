@@ -56,8 +56,9 @@ class StepRules(unittest.TestCase):
     def test_the_pantheon_plan_parses(self):
         with open(os.path.join(ROOT, "PLAN.md"), encoding="utf-8") as source:
             steps = plans.parse_steps(source.read())
-        self.assertEqual(len(steps), 8)
+        self.assertEqual(len(steps), 9)
         self.assertEqual(steps[5][1], (2, 3, 4))
+        self.assertEqual(steps[9][1], (5,))
 
     def test_states_follow_the_items(self):
         plan = {"item": "P", "steps": "1 2<1 3 4<2,3"}

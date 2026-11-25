@@ -74,3 +74,8 @@ mecánica: relanza los turnos aprobados, vigila los leases y avisa al humano.
 8. **Bootstrap y escritorio.** `pantheon bootstrap` (enlaces de la skill,
    comando en `~/.local/bin`, línea en los AGENTS/CLAUDE/GEMINI globales) y
    atajo de Hyprland que abre `status`. Depende de: 6 y 7.
+9. **Portabilidad.** Que Pantheon funcione en cualquier distro de Linux, en
+   macOS y en Windows: rutas por plataforma (XDG en Unix, `%APPDATA%` y
+   `%LOCALAPPDATA%` en Windows), lock de archivos y vida de procesos sin
+   depender de `fcntl` ni de señales POSIX, lanzamiento de agentes en Windows,
+   y la suite de tests en las tres plataformas. Depende de: 5.

@@ -59,12 +59,42 @@ quién pasar el turno. `pantheon role <rol>` lo vuelve a imprimir.
   pueden volver a tomar.
 - `leave <id>` cierra la sesión y libera sus ítems.
 
+## Dispatch: lanzar agentes sin interfaz
+
+El humano aprueba un ítem con su reparto de agentes por rol, y Pantheon
+lanza al agente al que le toca:
+
+```bash
+pantheon init TASK-42 --new-worktree --base origin/main     # worktree en [worktrees] path
+pantheon approve TASK-42 --cast reviewer=gentle:deepseek/deepseek-v4-pro --cast qa=opencode:openai/gpt-5 --dispatch
+pantheon dispatch TASK-42            # lanza el turno actual; --dry-run muestra el comando
+pantheon revoke TASK-42              # nadie más se lanza hasta una nueva aprobación
+```
+
+- `approve` es solo del humano: se niega dentro de una sesión de agente. El
+  `cast` completa los roles que faltan con `[defaults.cast]` (planner y coder
+  usan `claude`), exige que reviewer y QA corran otro modelo y rechaza agentes
+  desactivados. La aprobación cubre todas las rondas del ítem.
+- `dispatch` lanza al agente del `cast` para el rol en `next`, dentro del
+  worktree, con `PANTHEON_SESSION` y el ítem ya tomado, y deja la salida en
+  `~/.local/share/pantheon/logs/<sesión>.log`. En la siguiente ronda retoma la
+  misma conversación del agente (si el agente sabe retomar), así no pierde el
+  contexto.
+- **Si te lanzaron sin interfaz:** no hagas `join` ni `wait`. Haz tu turno,
+  postea y termina; Pantheon te relanza cuando vuelva a ser tu turno.
+- Un agente sin modo sin interfaz (Antigravity) no se lanza: `dispatch` sale
+  con 3 e imprime el `join` que el humano corre desde el IDE.
+- Cada agente se define en `[agents.<nombre>]` de la config (`launch`,
+  `resume`, `enabled`, `headless`, `model`), sobre valores por defecto para
+  `claude`, `gentle`, `opencode`, `codex` (desactivado) y `antigravity`.
+
 ## Metadata de un ítem
 
 | Campo | Para qué |
 |---|---|
 | `item`, `repo`, `kind`, `title` | Qué es: `change` o `plan`, y de qué repo |
 | `flow` | Los roles que actúan, en orden; después va el humano |
+| `cast`, `approved` | Qué agente y modelo juega cada rol, y cuándo lo aprobó el humano para dispatch |
 | `turn`, `next`, `round`, `max_rounds` | De quién es el turno y cuántas rondas de revisión van |
 | `holder` | La sesión que trabaja el ítem ahora; vale mientras esa sesión siga viva |
 | `branch`, `worktree`, `commit` | Dónde está el código y qué commit se revisa |

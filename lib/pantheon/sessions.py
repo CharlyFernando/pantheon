@@ -17,7 +17,6 @@ import secrets
 
 from . import store
 
-AGENTS = ("claude", "gentle", "opencode", "codex", "antigravity")
 MODES = ("interactive", "headless")
 STAMP = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -30,7 +29,9 @@ def directory():
 
 def known_agents():
     """The built-in agents plus any `[agents.<name>]` of the config."""
-    return tuple(dict.fromkeys(AGENTS + tuple(store.load_config().get("agents", {}))))
+    from . import agents
+
+    return tuple(agents.definitions())
 
 
 def lease_seconds():
@@ -158,6 +159,17 @@ def holder_alive(header, now=None):
     except ValueError:
         return ""
     return holder if alive(record, now) else ""
+
+
+def hold(slug, item, role, record):
+    """Make `record` the holder of the item; PermissionError when it may not."""
+    from . import board
+
+    with store.locked(slug):
+        header, history = store.read(slug, item)
+        board.check_claim(header, role, record["id"], holder_alive(header), record.get("model"))
+        header["holder"] = record["id"]
+        store.write(slug, item, header, history)
 
 
 def every():
